@@ -41,35 +41,56 @@ SHEETS_ID       = os.environ["GOOGLE_SHEETS_ID"]
 GOOGLE_CREDS    = os.environ.get("GOOGLE_CREDS_JSON", "google_creds.json")
 REQUEST_DELAY   = 1.5
 
-# Alle bekannten Kategorieseiten (direkt von der Live-Seite)
+# Alle Sub-Kategorieseiten — direkt von der Live-Seite geprüft
 ELUX_CATEGORY_URLS = [
-    # Technische Innenbeleuchtung
+    # Technische Innenbeleuchtung (14 Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/deckenanbauleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/deckeneinbauleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/haengeleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/profile.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/downlights.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/wand-und-spiegelleuchten.html",
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/tisch-und-stehleuchten.html",
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/stromschienen-und-strahler.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/lichtbandsysteme.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/stromschienen-und-strahler.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/tisch-und-stehleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/led-strips-treiber-und-zubehor.html",
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/frw-nuplex-und-lichtbalken.html",
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/hallen-und-industrieleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/notleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/frw-nuplex-und-lichtbalken.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/steuerungen.html",
-    # Technische Außenbeleuchtung
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung.html",
-    # Dekorative Beleuchtung
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten.html",
-    # Leuchtmittel
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel.html",
-    # LED Umrüstungen
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/interior/smart-home/casambi.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/interior/smart-home/eutrac.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/hallen-und-industrieleuchten.html",
+    # Technische Außenbeleuchtung (5 Sub-Kategorien)
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/anbauleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/einbauleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/pollerleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/strahler.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/strassenleuchten.html",
+    # Dekorative Beleuchtung (8 Sub-Kategorien)
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/hangeleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-beleuchtung/deckenleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/kronleuchter.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/wandleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/stehleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/tischleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/badezimmerleuchten.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/ventilatoren.html",
+    # Leuchtmittel (7 Sub-Kategorien)
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-e27.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-e14.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-gu10.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/sonstige-leuchtmittel-230v.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-tubes.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-12v.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/speziallampen.html",
+    # LED Umrüstungen (direkt, keine Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/led-umrustungen-und-sanierungen.html",
-    # Zubehör
-    "https://shop.elux-licht.at/shop/pub/elux/produkte/zubehor.html",
-    # Restposten
-    "https://shop.elux-licht.at/shop/pub/elux/restposten.html",
+    # Zubehör (2 Sub-Kategorien)
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/zubehor/leuchtenzubehor.html",
+    "https://shop.elux-licht.at/shop/pub/elux/produkte/zubehor/pfahle-und-masten.html",
+    # Neuheiten & Abverkauf
+    "https://shop.elux-licht.at/shop/pub/elux/coming-soon.html",
+    "https://shop.elux-licht.at/shop/pub/elux/derzeit-ist-keine-aktion-verfugbar.html",
 ]
 
 @dataclass
@@ -330,31 +351,29 @@ def scrape_all() -> list[EluxVariant]:
     return all_variants
 
 def get_shopify_skus() -> dict:
-    url = f"https://{SHOPIFY_SHOP}/admin/api/2024-01/variants.json"
     headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
     result = {}
-    page_url = f"{url}?limit=250"
+    page_url = f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json?limit=250&fields=id,variants"
 
     while page_url:
-        r = requests.get(page_url, headers=headers, timeout=20)
+        r = requests.get(page_url, headers=headers, timeout=30)
         r.raise_for_status()
         data = r.json()
-        for v in data.get("variants", []):
-            if v.get("sku"):
-                result[v["sku"].strip()] = {
-                    "variant_id": v["id"],
-                    "product_id": v["product_id"],
-                    "inventory_item_id": v["inventory_item_id"],
-                    "stock": v["inventory_quantity"],
-                    "title": v.get("title", ""),
-                }
-        # Link-Header für Pagination
+        for product in data.get("products", []):
+            for v in product.get("variants", []):
+                if v.get("sku"):
+                    result[v["sku"].strip()] = {
+                        "variant_id": v["id"],
+                        "product_id": product["id"],
+                        "inventory_item_id": v["inventory_item_id"],
+                        "stock": v["inventory_quantity"],
+                        "title": v.get("title", ""),
+                    }
         link = r.headers.get("Link", "")
-        next_url = None
+        page_url = None
         for part in link.split(","):
             if 'rel="next"' in part:
-                next_url = part.split(";")[0].strip().strip("<>")
-        page_url = next_url
+                page_url = part.split(";")[0].strip().strip("<>")
 
     log.info(f"Shopify: {len(result)} Varianten geladen")
     return result
