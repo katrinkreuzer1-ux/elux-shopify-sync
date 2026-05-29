@@ -108,6 +108,7 @@ class EluxVariant:
     category: str = ""
     product_url: str = ""
     image_url: str = ""
+    image_urls: str = ""
 
 session = requests.Session()
 session.headers.update({
@@ -173,11 +174,31 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
             product_name = el.get_text(strip=True)
             break
 
-    # Bild
+    # Alle Bilder aus der Galerie
     image_url = ""
-    img = soup.select_one(".gallery-placeholder img, .fotorama__img, .product.media img")
-    if img:
-        image_url = img.get("src", img.get("data-src", ""))
+    image_urls = ""
+    all_images = []
+    for img in soup.select(".gallery-placeholder img, .fotorama img, .product.media img, [data-gallery] img, .MagicSlideshow img"):
+        src = img.get("src", img.get("data-src", img.get("data-original", "")))
+        if src and "elux-licht.at" in src and src not in all_images:
+            # Nur echte Produktbilder, keine Icons/Thumbnails
+            if not any(x in src for x in ["logo", "icon", "placeholder", "bright/"]):
+                all_images.append(src)
+    # Fallback: fotorama JSON data
+    fotorama = soup.select_one("[data-gallery]")
+    if fotorama:
+        import json as _json
+        try:
+            gallery_data = _json.loads(fotorama.get("data-gallery", "[]"))
+            for item in gallery_data:
+                src = item.get("full", item.get("img", ""))
+                if src and src not in all_images:
+                    all_images.append(src)
+        except Exception:
+            pass
+    if all_images:
+        image_url = all_images[0]
+        image_urls = " | ".join(all_images)
 
     # Preis
     price = ""
@@ -254,6 +275,7 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
                         category=category,
                         product_url=url,
                         image_url=image_url,
+                        image_urls=image_urls,
                     ))
                 current_sku = sku_match.group(1)
                 current_desc_lines = [line]
@@ -310,6 +332,7 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
                         category=category,
                         product_url=url,
                         image_url=image_url,
+                        image_urls=image_urls,
                     ))
                 break
 
@@ -428,10 +451,10 @@ def export_to_sheets(new_products: list, delisted: list):
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet("Neue Produkte", 5000, 15)
 
-    rows = [["SKU","Name","Kategorie","Beschreibung Details","Beschreibung Mehr","Lagerstand","Preis","Maße","Farbe","IP","Watt","Bild-URL","Produkt-URL","Datum"]]
+    rows = [["SKU","Name","Kategorie","Beschreibung Details","Beschreibung Mehr","Lagerstand","Preis","Maße","Farbe","IP","Watt","Bild-URL (Haupt)","Alle Bild-URLs","Produkt-URL","Datum"]]
     for v in new_products:
         rows.append([v.sku, v.name, v.category, v.description_details[:500], v.description_more[:300],
-                     v.stock, v.price, v.dimensions, v.color, v.ip_rating, v.watt, v.image_url, v.product_url, ts])
+                     v.stock, v.price, v.dimensions, v.color, v.ip_rating, v.watt, v.image_url, v.image_urls, v.product_url, ts])
     ws.update(rows, "A1")
     ws.format("A1:N1", {"textFormat": {"bold": True}})
 
