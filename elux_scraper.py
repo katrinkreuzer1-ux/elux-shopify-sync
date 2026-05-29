@@ -312,6 +312,7 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
                 category=category,
                 product_url=url,
                 image_url=image_url,
+                image_urls=image_urls,
             ))
 
     # Wenn keine Varianten → Hauptprodukt mit SKU aus der Seite
