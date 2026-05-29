@@ -39,7 +39,7 @@ SHOPIFY_SHOP    = os.environ["SHOPIFY_SHOP_URL"]
 SHOPIFY_TOKEN   = os.environ["SHOPIFY_ADMIN_TOKEN"]
 SHEETS_ID       = os.environ["GOOGLE_SHEETS_ID"]
 GOOGLE_CREDS    = os.environ.get("GOOGLE_CREDS_JSON", "google_creds.json")
-REQUEST_DELAY   = 1.5
+REQUEST_DELAY   = 0.8
 
 # Alle Sub-Kategorieseiten — direkt von der Live-Seite geprüft
 ELUX_CATEGORY_URLS = [
