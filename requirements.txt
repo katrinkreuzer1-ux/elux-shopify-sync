@@ -1,0 +1,7 @@
+requests==2.31.0
+beautifulsoup4==4.12.3
+lxml==5.1.0
+ShopifyAPI==12.4.0
+gspread==6.0.2
+google-auth==2.28.0
+python-dotenv==1.0.1

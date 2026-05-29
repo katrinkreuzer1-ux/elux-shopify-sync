@@ -1,0 +1,15 @@
+# Niemals committen!
+.env
+google_creds.json
+*.json.bak
+
+# Lokale Logs
+elux_sync.log
+elux_products_raw.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
