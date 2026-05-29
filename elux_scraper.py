@@ -39,7 +39,7 @@ SHOPIFY_SHOP    = os.environ["SHOPIFY_SHOP_URL"]
 SHOPIFY_TOKEN   = os.environ["SHOPIFY_ADMIN_TOKEN"]
 SHEETS_ID       = os.environ["GOOGLE_SHEETS_ID"]
 GOOGLE_CREDS    = os.environ.get("GOOGLE_CREDS_JSON", "google_creds.json")
-REQUEST_DELAY   = 0.8
+REQUEST_DELAY   = 1.5
 
 # Alle Sub-Kategorieseiten — direkt von der Live-Seite geprüft
 ELUX_CATEGORY_URLS = [
@@ -150,8 +150,7 @@ def collect_product_urls_from_category(category_url: str) -> list[str]:
         for a in soup.select("a.product-item-link, .product-item-info a, .product-item h2 a, li.product-item a.product-photo"):
             href = a.get("href", "")
             if href and "elux-licht.at" in href and href not in urls:
-                # Nur echte Produktseiten (nicht Kategorien)
-                if not any(x in href for x in ["/produkte/", "/kategorie/", "customer", "cart", "wishlist", "search"]):
+                if not any(x in href for x in ["customer", "cart", "wishlist", "search"]):
                     urls.append(href)
 
         # Pagination — nächste Seite
