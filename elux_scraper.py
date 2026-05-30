@@ -387,15 +387,17 @@ def scrape_all() -> list[EluxVariant]:
     return all_variants
 
 
-def get_shopify_skus() -> dict:
+def get_shopify_skus() -> tuple[dict, dict]:
     """
-    Lädt alle Shopify-Varianten inkl. Vendor + inventory_management.
-    - vendor: für Sollux-Schutz
-    - inventory_management: um zu erkennen ob Tracking aktiv ist
+    Lädt alle Shopify-Varianten inkl. Vendor + inventory_management + published.
+    Gibt zurück:
+      - shopify_skus:     {sku: {...}} für Varianten-Abgleich
+      - shopify_products: {product_id: {vendor, published, skus: [...]}} für publish/unpublish
     """
     headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
-    result = {}
-    page_url = f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json?limit=250&fields=id,vendor,variants"
+    shopify_skus = {}
+    shopify_products = {}
+    page_url = f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json?limit=250&fields=id,vendor,published_at,variants"
 
     while page_url:
         r = requests.get(page_url, headers=headers, timeout=30)
@@ -403,27 +405,38 @@ def get_shopify_skus() -> dict:
         data = r.json()
         for product in data.get("products", []):
             vendor = product.get("vendor", "")
+            product_id = product["id"]
+            # published_at ist None wenn das Produkt versteckt ist
+            is_published = product.get("published_at") is not None
+
+            shopify_products[product_id] = {
+                "vendor": vendor,
+                "published": is_published,
+                "skus": [],
+            }
+
             for v in product.get("variants", []):
                 if v.get("sku"):
-                    result[v["sku"].strip()] = {
+                    sku = v["sku"].strip()
+                    shopify_skus[sku] = {
                         "variant_id": v["id"],
-                        "product_id": product["id"],
+                        "product_id": product_id,
                         "inventory_item_id": v["inventory_item_id"],
                         "stock": v["inventory_quantity"],
                         "title": v.get("title", ""),
                         "vendor": vendor,
-                        # inventory_management = "shopify" → Tracking aktiv
-                        # inventory_management = None     → kein Tracking
                         "inventory_management": v.get("inventory_management"),
                     }
+                    shopify_products[product_id]["skus"].append(sku)
+
         link = r.headers.get("Link", "")
         page_url = None
         for part in link.split(","):
             if 'rel="next"' in part:
                 page_url = part.split(";")[0].strip().strip("<>")
 
-    log.info(f"Shopify: {len(result)} Varianten geladen")
-    return result
+    log.info(f"Shopify: {len(shopify_skus)} Varianten, {len(shopify_products)} Produkte geladen")
+    return shopify_skus, shopify_products
 
 
 def enable_inventory_tracking(variant_id: int, max_retries: int = 5) -> bool:
@@ -522,6 +535,44 @@ def update_shopify_stock(inventory_item_id: int, quantity: int, location_id: str
     raise Exception(f"Shopify Update fehlgeschlagen nach {max_retries} Versuchen (inventory_item_id={inventory_item_id})")
 
 
+def set_product_published(product_id: int, published: bool, max_retries: int = 5) -> bool:
+    """
+    Setzt ein Produkt auf sichtbar (published=True) oder unsichtbar (published=False).
+    Wird aufgerufen wenn:
+      - Alle Varianten eines Produkts Lagerstand 0 haben → verstecken
+      - Mindestens eine Variante > 0 hat → wieder sichtbar machen
+    Sollux-Produkte werden NIE hier aufgerufen (Schutz in run_sync).
+    """
+    headers = {
+        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
+        "Content-Type": "application/json",
+    }
+
+    time.sleep(SHOPIFY_REQUEST_DELAY)
+
+    for attempt in range(max_retries):
+        r = requests.put(
+            f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products/{product_id}.json",
+            json={"product": {"id": product_id, "published": published}},
+            headers=headers, timeout=15,
+        )
+
+        if r.status_code == 200:
+            return True
+
+        elif r.status_code == 429:
+            retry_after = float(r.headers.get("Retry-After", 10))
+            log.warning(f"    429 Rate Limit (published) – warte {retry_after:.0f}s...")
+            time.sleep(retry_after + 1)
+
+        else:
+            log.warning(f"    HTTP {r.status_code} beim Setzen von published={published} (Versuch {attempt+1}/{max_retries})")
+            time.sleep(3 * (attempt + 1))
+
+    log.error(f"    published konnte nicht gesetzt werden für Produkt {product_id}")
+    return False
+
+
 def get_sheets_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -591,6 +642,7 @@ def run_sync():
 
     log.info("\n[3/4] Abgleich...")
     updated, new_products, delisted, errors, skipped_protected, tracking_enabled = [], [], [], [], [], []
+    hidden_products, restored_products = [], []
 
     # Elux-SKUs → Shopify aktualisieren
     for sku, ev in elux_by_sku.items():
@@ -652,6 +704,8 @@ def run_sync():
     log.info(f"Neu (Sheet A):       {len(new_products)}")
     log.info(f"Ausgelistet:         {len(delisted)}")
     log.info(f"Geschützt (Sollux):  {len(skipped_protected)}")
+    log.info(f"Versteckt (alle 0):  {len(hidden_products)}")
+    log.info(f"Wieder sichtbar:     {len(restored_products)}")
     log.info(f"Fehler:              {len(errors)}")
     log.info("=" * 60)
 
