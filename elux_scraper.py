@@ -637,7 +637,7 @@ def run_sync():
         json.dump([vars(v) for v in elux_variants], f, ensure_ascii=False, indent=2)
 
     log.info("\n[2/4] Lade Shopify...")
-    shopify_skus = get_shopify_skus()
+    shopify_skus, shopify_products = get_shopify_skus()
     location_id = get_shopify_location_id()
 
     log.info("\n[3/4] Abgleich...")
@@ -694,7 +694,45 @@ def run_sync():
             delisted.append({**sv, "sku": sku})
             # Hinweis: Sollux-Produkte landen nie hier (continue oben)
 
-    log.info("\n[4/4] Google Sheets Export...")
+    log.info("\n[4/4] Produkt-Sichtbarkeit prüfen...")
+    # Alle Elux-Produkte: alle Varianten = 0 → verstecken / mind. 1 > 0 → zeigen
+    # Sollux-Produkte werden NIEMALS angefasst!
+    for product_id, pdata in shopify_products.items():
+        vendor = pdata.get("vendor", "")
+
+        # Sollux komplett überspringen
+        if any(vendor.strip() == v for v in PROTECTED_VENDORS):
+            continue
+        if pdata["skus"] and all(is_protected_sku(s) for s in pdata["skus"]):
+            continue
+
+        # Gesamtlagerstand des Produkts berechnen (aktualisierte Werte)
+        total_stock = 0
+        for sku in pdata["skus"]:
+            if sku in elux_by_sku:
+                total_stock += elux_by_sku[sku].stock
+            elif sku in shopify_skus:
+                total_stock += shopify_skus[sku]["stock"]
+
+        currently_published = pdata["published"]
+
+        if total_stock == 0 and currently_published:
+            ok = set_product_published(product_id, False)
+            if ok:
+                log.info(f"  👁 Versteckt (alle 0): Produkt {product_id} [{vendor}]")
+                hidden_products.append(product_id)
+            else:
+                log.error(f"  ✗ Konnte Produkt {product_id} nicht verstecken")
+
+        elif total_stock > 0 and not currently_published:
+            ok = set_product_published(product_id, True)
+            if ok:
+                log.info(f"  ✅ Wieder sichtbar: Produkt {product_id} [{vendor}]")
+                restored_products.append(product_id)
+            else:
+                log.error(f"  ✗ Konnte Produkt {product_id} nicht aktivieren")
+
+    log.info("\n[5/5] Google Sheets Export...")
     if new_products or delisted:
         export_to_sheets(new_products, delisted)
 
