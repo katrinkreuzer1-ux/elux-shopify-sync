@@ -4,8 +4,16 @@ elux → Shopify Sync
 Scrapt shop.elux-licht.at, gleicht SKUs mit Shopify ab,
 exportiert neue/fehlende Produkte nach Google Sheets.
 
-FIX 30.05.2026: Sollux Lighting Produkte werden NICHT auf 0 gesetzt.
-Schutz via Vendor "Sollux Lighting" ODER SKU-Prefix SL. / TH.
+FIXES 01.06.2026:
+- Layout A/B Erkennung: Lagerstand oben vs. im Ausführungs-Tab
+- extract_sku() mit Leerzeichen (85-NOVA S 18/830B, 54-DIFF FAMOSA PL ANTHRAZIT)
+- Beschreibung Details / Mehr Informationen korrekt getrennt
+- Sollux-Schutz (Vendor + SL./TH. Prefix)
+- Tracking-Aktivierung vor jedem Lagerstand-Update
+- Rate-Limit Schutz (0.55s vorbeugend + 429 Retry)
+- Verstecken deaktiviert, Wieder-Aktivieren aktiv
+- Tab C: Alle Elux Produkte (SKU, Name, Lagerstand)
+- Node.js 24 in sync.yml
 """
 
 import os
@@ -36,28 +44,26 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-ELUX_BASE       = "https://shop.elux-licht.at/shop/pub"
-SHOPIFY_SHOP    = os.environ["SHOPIFY_SHOP_URL"]
-SHOPIFY_TOKEN   = os.environ["SHOPIFY_ADMIN_TOKEN"]
-SHEETS_ID       = os.environ["GOOGLE_SHEETS_ID"]
-GOOGLE_CREDS    = os.environ.get("GOOGLE_CREDS_JSON", "google_creds.json")
-REQUEST_DELAY   = 1.5
+ELUX_BASE             = "https://shop.elux-licht.at/shop/pub"
+SHOPIFY_SHOP          = os.environ["SHOPIFY_SHOP_URL"]
+SHOPIFY_TOKEN         = os.environ["SHOPIFY_ADMIN_TOKEN"]
+SHEETS_ID             = os.environ["GOOGLE_SHEETS_ID"]
+GOOGLE_CREDS          = os.environ.get("GOOGLE_CREDS_JSON", "google_creds.json")
+REQUEST_DELAY         = 1.5
+SHOPIFY_REQUEST_DELAY = 0.55  # 1.8 Req/Sek → unter Shopify Limit von 2/Sek
 
-# Shopify REST API: Leaky Bucket mit max 40 Requests im Bucket,
-# Auffüllrate = 2 Requests/Sekunde (Standard-Plan).
-# 0.55s Pause = ~1.8 Req/Sek → sicher unter dem Limit, nie 429.
-# Shopify Plus: 20 Req/Sek → könnte man auf 0.1s senken.
-SHOPIFY_REQUEST_DELAY = 0.55
-
-# Vendor-Namen die NIEMALS auf 0 gesetzt werden dürfen
-PROTECTED_VENDORS = ["Sollux Lighting"]
-
-# SKU-Prefixe die NIEMALS auf 0 gesetzt werden dürfen
+PROTECTED_VENDORS     = ["Sollux Lighting"]
 PROTECTED_SKU_PREFIXES = ["SL.", "TH."]
 
-# Alle Sub-Kategorieseiten — direkt von der Live-Seite geprüft
+# Stoppwörter für SKU-Erkennung (Zeilen OHNE "Lagerstand")
+SKU_STOP_WORDS_NO_LAGER = {
+    "LED", "Wand", "Decke", "Anbaul", "Einbaul", "Hange",
+    "Strahler", "Leuchte", "Profil", "Lampe", "Treiber",
+    "Preis", "Mehr", "Details", "inkl", "ohne", "mit",
+    "weiß", "schwarz", "grau", "silber", "chrom", "gold", "nickel", "braun", "beige",
+}
+
 ELUX_CATEGORY_URLS = [
-    # Technische Innenbeleuchtung (14 Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/deckenanbauleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/deckeneinbauleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/haengeleuchten.html",
@@ -74,13 +80,11 @@ ELUX_CATEGORY_URLS = [
     "https://shop.elux-licht.at/shop/pub/elux/produkte/interior/smart-home/casambi.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/interior/smart-home/eutrac.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-innenbeleuchtung/hallen-und-industrieleuchten.html",
-    # Technische Außenbeleuchtung (5 Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/anbauleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/einbauleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/pollerleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/strahler.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/technische-aussenbeleuchtung/strassenleuchten.html",
-    # Dekorative Beleuchtung (8 Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/hangeleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-beleuchtung/deckenleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/kronleuchter.html",
@@ -89,7 +93,6 @@ ELUX_CATEGORY_URLS = [
     "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/tischleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/badezimmerleuchten.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/dekorative-leuchten/ventilatoren.html",
-    # Leuchtmittel (7 Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-e27.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-e14.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-gu10.html",
@@ -97,15 +100,13 @@ ELUX_CATEGORY_URLS = [
     "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-tubes.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/led-leuchtmittel-12v.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/leuchtmittel/speziallampen.html",
-    # LED Umrüstungen (direkt, keine Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/led-umrustungen-und-sanierungen.html",
-    # Zubehör (2 Sub-Kategorien)
     "https://shop.elux-licht.at/shop/pub/elux/produkte/zubehor/leuchtenzubehor.html",
     "https://shop.elux-licht.at/shop/pub/elux/produkte/zubehor/pfahle-und-masten.html",
-    # Neuheiten & Abverkauf
     "https://shop.elux-licht.at/shop/pub/elux/coming-soon.html",
     "https://shop.elux-licht.at/shop/pub/elux/derzeit-ist-keine-aktion-verfugbar.html",
 ]
+
 
 @dataclass
 class EluxVariant:
@@ -124,6 +125,7 @@ class EluxVariant:
     image_url: str = ""
     image_urls: str = ""
 
+
 session = requests.Session()
 session.headers.update({
     "User-Agent": (
@@ -137,21 +139,60 @@ session.headers.update({
 
 
 def is_protected_sku(sku: str, vendor: str = "") -> bool:
-    """
-    Gibt True zurück wenn diese SKU/Variante NICHT auf 0 gesetzt werden darf.
-    Schutz greift wenn:
-      - Vendor in PROTECTED_VENDORS (z.B. "Sollux Lighting")
-      - SKU beginnt mit einem Prefix aus PROTECTED_SKU_PREFIXES (z.B. SL. oder TH.)
-    """
+    """True wenn diese SKU/Variante niemals verändert werden darf."""
     if vendor and any(vendor.strip() == v for v in PROTECTED_VENDORS):
         return True
     sku_upper = sku.upper()
-    if any(sku_upper.startswith(prefix.upper()) for prefix in PROTECTED_SKU_PREFIXES):
-        return True
-    return False
+    return any(sku_upper.startswith(p.upper()) for p in PROTECTED_SKU_PREFIXES)
 
 
-def get(url: str) -> Optional[BeautifulSoup]:
+def extract_sku(line: str) -> str:
+    """
+    Extrahiert SKU aus einer Zeile des Ausführungs-Tabs.
+    Zwei Modi:
+    - Mit "Lagerstand" in Zeile: alles vor Lagerstand nehmen, bereinigen
+    - Ohne "Lagerstand": Stoppwörter verwenden
+    Erlaubt Leerzeichen in SKU (z.B. 85-NOVA S 18/830B, 54-DIFF FAMOSA PL ANTHRAZIT).
+    """
+    # Bereinige "→ X" am Ende (kommt manchmal in Tab-Zeilen vor)
+    line = re.sub(r'\s*→\s*\d+\s*$', '', line).strip()
+    m = re.match(r'^\d{2,}-[A-Za-z0-9][A-Za-z0-9/\-\.]*', line)
+    if not m:
+        return ""
+    sku_core = m.group(0)
+    sku = sku_core
+    rest = line[len(sku_core):]
+    # Kern mit / oder . gilt als "komplex" → reine Großwörter danach stoppen
+    core_is_complex = bool(re.search(r'[/.]', sku_core[3:]))
+    has_lagerstand = "Lagerstand" in line
+
+    if has_lagerstand:
+        lager_pos = rest.find(" Lagerstand")
+        candidate = rest[:lager_pos].strip() if lager_pos >= 0 else rest.strip()
+        for part in candidate.split():
+            if re.search(r'[äöüÄÖÜß]', part): break
+            if re.match(r'^\d{4,}$', part): break
+            if re.match(r'^[A-Z][a-z]{3,}', part): break
+            if re.match(r'^[a-z]{4,}$', part): break
+            if re.match(r'^[A-Z]{4,}$', part) and core_is_complex: break
+            sku += " " + part
+    else:
+        for part in rest.split():
+            if part in SKU_STOP_WORDS_NO_LAGER: break
+            if any(part.startswith(sw) for sw in {"LED", "Anbaul", "Einbaul", "Leuchte"}): break
+            if re.search(r'[äöüÄÖÜß]', part): break
+            if re.match(r'^\d{4,}$', part): break
+            if re.match(r'^[A-Z][a-z]{3,}', part): break
+            if re.match(r'^[a-z]{4,}$', part): break
+            if re.match(r'^[A-Z]{4,}$', part) and core_is_complex: break
+            if len(part) <= 5 or re.search(r'[0-9/\-\.]', part):
+                sku += " " + part
+            else:
+                break
+    return sku.strip()
+
+
+def get_soup(url: str) -> Optional[BeautifulSoup]:
     for attempt in range(3):
         try:
             time.sleep(REQUEST_DELAY)
@@ -166,35 +207,49 @@ def get(url: str) -> Optional[BeautifulSoup]:
 
 
 def collect_product_urls_from_category(category_url: str) -> list[str]:
-    """Sammelt alle Produkt-URLs aus einer Kategorieseite (inkl. Pagination)."""
     urls = []
     page_url = category_url
-    visited = set()
-
+    visited: set = set()
     while page_url and page_url not in visited:
         visited.add(page_url)
-        soup = get(page_url)
+        soup = get_soup(page_url)
         if not soup:
             break
-
-        for a in soup.select("a.product-item-link, .product-item-info a, .product-item h2 a, li.product-item a.product-photo"):
+        for a in soup.select(
+            "a.product-item-link, .product-item-info a, "
+            ".product-item h2 a, li.product-item a.product-photo"
+        ):
             href = a.get("href", "")
             if href and "elux-licht.at" in href and href not in urls:
                 if not any(x in href for x in ["customer", "cart", "wishlist", "search"]):
                     urls.append(href)
-
         next_a = soup.select_one("a.action.next, li.pages-item-next a, a[title='Nächste']")
         page_url = next_a.get("href") if next_a else None
-
     return list(dict.fromkeys(urls))
 
 
 def parse_product(url: str, category: str) -> list[EluxVariant]:
-    """Parsed eine Produktseite → alle Varianten mit SKU + Lagerstand."""
-    soup = get(url)
+    """
+    Parsed eine Produktseite → alle Varianten mit SKU + Lagerstand.
+
+    Layout A: "Alle Lagerstände siehe unten: Ausführung"
+              → Lagerstand steht im Ausführungs-Tab pro Variante
+
+    Layout B: Kein solcher Hinweis
+              → Lagerstand steht oben rechts auf der Seite
+              → Im Tab steht SKU ohne Lagerstand
+              → Fallback: Lagerstand von oben lesen
+    """
+    soup = get_soup(url)
     if not soup:
         return []
 
+    page_text = soup.get_text(separator="\n")
+
+    # ── Layout erkennen ───────────────────────────────────────────
+    is_layout_a = "Alle Lagerstände siehe unten" in page_text
+
+    # ── Produktname ───────────────────────────────────────────────
     product_name = ""
     for sel in ["h1.page-title span", "h1.page-title", "h1"]:
         el = soup.select_one(sel)
@@ -202,10 +257,14 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
             product_name = el.get_text(strip=True)
             break
 
+    # ── Bilder ───────────────────────────────────────────────────
     image_url = ""
     image_urls = ""
-    all_images = []
-    for img in soup.select(".gallery-placeholder img, .fotorama img, .product.media img, [data-gallery] img, .MagicSlideshow img"):
+    all_images: list = []
+    for img in soup.select(
+        ".gallery-placeholder img, .fotorama img, "
+        ".product.media img, [data-gallery] img, .MagicSlideshow img"
+    ):
         src = img.get("src", img.get("data-src", img.get("data-original", "")))
         if src and "elux-licht.at" in src and src not in all_images:
             if not any(x in src for x in ["logo", "icon", "placeholder", "bright/"]):
@@ -214,8 +273,7 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
     if fotorama:
         import json as _json
         try:
-            gallery_data = _json.loads(fotorama.get("data-gallery", "[]"))
-            for item in gallery_data:
+            for item in _json.loads(fotorama.get("data-gallery", "[]")):
                 src = item.get("full", item.get("img", ""))
                 if src and src not in all_images:
                     all_images.append(src)
@@ -225,93 +283,83 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
         image_url = all_images[0]
         image_urls = " | ".join(all_images)
 
+    # ── Preis ─────────────────────────────────────────────────────
     price = ""
     price_el = soup.select_one(".price-box .price, [data-price-type='finalPrice'] .price")
     if price_el:
         price = price_el.get_text(strip=True)
 
+    # ── Tab "Details" → description_details ──────────────────────
     description_details = ""
-    for sel in ["#product-attribute-specs-table", ".product.attribute.description .value",
-                "#description .value", ".product-description", ".tab-content-item:first-child"]:
+    for sel in [
+        "#description .value", "#description",
+        ".product.attribute.description .value",
+        ".product.attribute.description",
+    ]:
         el = soup.select_one(sel)
         if el:
-            description_details = el.get_text(separator="\n", strip=True)
-            break
+            txt = el.get_text(separator="\n", strip=True)
+            if txt and "Mehr Informationen" not in txt[:40]:
+                description_details = txt
+                break
+    if not description_details:
+        for panel in soup.select(".data.item.content, [role='tabpanel'], .tab-content-item"):
+            txt = panel.get_text(separator="\n", strip=True)
+            if txt and "Mehr Informationen" not in txt[:40] and len(txt) > 20:
+                if not re.search(r'\d{2,}-[A-Za-z0-9]', txt[:100]):
+                    description_details = txt
+                    break
 
+    # ── Tab "Mehr Informationen" → description_more ───────────────
     description_more = ""
-    for sel in ["#additional", "#product-attribute-specs-table", ".additional-attributes"]:
+    for sel in ["#additional", ".additional-attributes", ".product-attributes"]:
         el = soup.select_one(sel)
-        if el and el.get_text(strip=True) != description_details:
-            description_more = el.get_text(separator="\n", strip=True)
-            break
+        if el:
+            txt = el.get_text(separator="\n", strip=True)
+            if txt and txt != description_details:
+                description_more = txt
+                break
 
-    variants = []
+    # ── Lagerstand oben (Layout B Fallback) ───────────────────────
+    # Wird nur verwendet wenn Layout B UND Tab keinen Lagerstand liefert
+    top_stock = 0
+    if not is_layout_a:
+        m = re.search(r'Lagerstand[:\s]+(\d+)\s*Stk', page_text, re.I)
+        if m:
+            top_stock = int(m.group(1))
 
+    # ── Ausführungs-Tab → Varianten ───────────────────────────────
+    variants: list[EluxVariant] = []
     ausfuehrung = None
-    for sel in ["#ausf-hrung", "#ausfuhrung", "#ausfuehrung", "[id*='ausfuhr']", "[id*='ausfuehr']"]:
+    for sel in ["#ausf-hrung", "#ausfuhrung", "#ausfuehrung",
+                "[id*='ausfuhr']", "[id*='ausfuehr']"]:
         el = soup.select_one(sel)
         if el:
             ausfuehrung = el
             break
-
     if not ausfuehrung:
         for panel in soup.select(".tab-content-item, .data.item.content, [role='tabpanel']"):
             txt = panel.get_text()
-            if "Lagerstand" in txt or re.search(r'\d{2,}-[A-Z0-9/]+', txt):
+            if "Lagerstand" in txt or re.search(r'\d{2,}-[A-Za-z0-9]', txt):
                 ausfuehrung = panel
                 break
 
     if ausfuehrung:
         text = ausfuehrung.get_text(separator="\n", strip=True)
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        lines_list = [l.strip() for l in text.splitlines() if l.strip()]
 
         current_sku = None
-        current_desc_lines = []
+        current_desc_lines: list = []
         current_stock = 0
 
-        for line in lines:
-            sku_match = re.match(r'^(\d{2,}-[A-Z0-9][A-Z0-9/\-]+)', line)
-            if sku_match:
-                if current_sku:
-                    desc = " ".join(current_desc_lines)
-                    dim_m = re.search(r'(L=\s*\d+mm[^\n,]+)', desc)
-                    col_m = re.search(r'(weiß|schwarz|grau|silber|chrom|gold|nickel)', desc, re.I)
-                    ip_m = re.search(r'(IP\d{2})', desc)
-                    w_m = re.search(r'(\d+(?:\.\d+)?\s*W)\b', desc)
-                    variants.append(EluxVariant(
-                        sku=current_sku,
-                        name=product_name,
-                        description_details=description_details,
-                        description_more=description_more,
-                        stock=current_stock,
-                        price=price,
-                        dimensions=dim_m.group(1) if dim_m else "",
-                        color=col_m.group(1) if col_m else "",
-                        ip_rating=ip_m.group(1) if ip_m else "",
-                        watt=w_m.group(1) if w_m else "",
-                        category=category,
-                        product_url=url,
-                        image_url=image_url,
-                        image_urls=image_urls,
-                    ))
-                current_sku = sku_match.group(1)
-                current_desc_lines = [line]
-                current_stock = 0
-                sm = re.search(r'Lagerstand[:\s]+(\d+)', line, re.I)
-                if sm:
-                    current_stock = int(sm.group(1))
-            elif current_sku:
-                current_desc_lines.append(line)
-                sm = re.search(r'Lagerstand[:\s]+(\d+)', line, re.I)
-                if sm:
-                    current_stock = int(sm.group(1))
-
-        if current_sku:
+        def save_variant():
+            if not current_sku:
+                return
             desc = " ".join(current_desc_lines)
             dim_m = re.search(r'(L=\s*\d+mm[^\n,]+)', desc)
             col_m = re.search(r'(weiß|schwarz|grau|silber|chrom|gold|nickel)', desc, re.I)
-            ip_m = re.search(r'(IP\d{2})', desc)
-            w_m = re.search(r'(\d+(?:\.\d+)?\s*W)\b', desc)
+            ip_m  = re.search(r'(IP\d{2})', desc)
+            w_m   = re.search(r'(\d+(?:\.\d+)?\s*W)\b', desc)
             variants.append(EluxVariant(
                 sku=current_sku,
                 name=product_name,
@@ -329,23 +377,44 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
                 image_urls=image_urls,
             ))
 
+        for line in lines_list:
+            sku = extract_sku(line)
+            if sku:
+                save_variant()
+                current_sku = sku
+                current_desc_lines = [line]
+                current_stock = 0
+                sm = re.search(r'Lagerstand[:\s]+(\d+)', line, re.I)
+                if sm:
+                    current_stock = int(sm.group(1))
+            elif current_sku:
+                current_desc_lines.append(line)
+                sm = re.search(r'Lagerstand[:\s]+(\d+)', line, re.I)
+                if sm:
+                    current_stock = int(sm.group(1))
+
+        save_variant()
+
+    # ── Layout B Fallback: Lagerstand von oben ────────────────────
+    # Nur wenn: Layout B + genau 1 Variante + stock=0 + top_stock > 0
+    if not is_layout_a and len(variants) == 1 and variants[0].stock == 0 and top_stock > 0:
+        log.info(f"    Layout B Fallback: stock={top_stock} von oben der Seite")
+        variants[0].stock = top_stock
+
+    # ── Fallback: SKU direkt von der Seite ────────────────────────
     if not variants:
         for sel in [".product.attribute.sku .value", "[itemprop='sku']", ".sku .value"]:
             el = soup.select_one(sel)
             if el:
                 sku = el.get_text(strip=True)
                 if sku:
+                    stock = top_stock if not is_layout_a else 0
                     variants.append(EluxVariant(
-                        sku=sku,
-                        name=product_name,
+                        sku=sku, name=product_name,
                         description_details=description_details,
                         description_more=description_more,
-                        stock=0,
-                        price=price,
-                        category=category,
-                        product_url=url,
-                        image_url=image_url,
-                        image_urls=image_urls,
+                        stock=stock, price=price, category=category,
+                        product_url=url, image_url=image_url, image_urls=image_urls,
                     ))
                 break
 
@@ -354,7 +423,7 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
 
 def scrape_all() -> list[EluxVariant]:
     all_variants: list[EluxVariant] = []
-    all_product_urls = []
+    all_product_urls: list = []
 
     log.info("Sammle Produkt-URLs aus allen Kategorien...")
     for cat_url in ELUX_CATEGORY_URLS:
@@ -365,7 +434,7 @@ def scrape_all() -> list[EluxVariant]:
         for u in urls:
             all_product_urls.append((u, category))
 
-    seen = set()
+    seen: set = set()
     unique = []
     for u, c in all_product_urls:
         if u not in seen:
@@ -373,7 +442,6 @@ def scrape_all() -> list[EluxVariant]:
             unique.append((u, c))
 
     log.info(f"\nGesamt {len(unique)} einzigartige Produktseiten — starte Parsing...")
-
     for i, (url, category) in enumerate(unique, 1):
         log.info(f"[{i}/{len(unique)}] {url}")
         vs = parse_product(url, category)
@@ -388,92 +456,44 @@ def scrape_all() -> list[EluxVariant]:
 
 
 def get_shopify_skus() -> tuple[dict, dict]:
-    """
-    Lädt alle Shopify-Varianten inkl. Vendor + inventory_management + published.
-    Gibt zurück:
-      - shopify_skus:     {sku: {...}} für Varianten-Abgleich
-      - shopify_products: {product_id: {vendor, published, skus: [...]}} für publish/unpublish
-    """
     headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
-    shopify_skus = {}
-    shopify_products = {}
-    page_url = f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json?limit=250&fields=id,vendor,published_at,variants"
-
+    shopify_skus: dict     = {}
+    shopify_products: dict = {}
+    page_url = (
+        f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json"
+        f"?limit=250&fields=id,vendor,published_at,variants"
+    )
     while page_url:
         r = requests.get(page_url, headers=headers, timeout=30)
         r.raise_for_status()
         data = r.json()
         for product in data.get("products", []):
-            vendor = product.get("vendor", "")
+            vendor     = product.get("vendor", "")
             product_id = product["id"]
-            # published_at ist None wenn das Produkt versteckt ist
             is_published = product.get("published_at") is not None
-
             shopify_products[product_id] = {
-                "vendor": vendor,
-                "published": is_published,
-                "skus": [],
+                "vendor": vendor, "published": is_published, "skus": []
             }
-
             for v in product.get("variants", []):
                 if v.get("sku"):
                     sku = v["sku"].strip()
                     shopify_skus[sku] = {
-                        "variant_id": v["id"],
-                        "product_id": product_id,
-                        "inventory_item_id": v["inventory_item_id"],
-                        "stock": v["inventory_quantity"],
-                        "title": v.get("title", ""),
-                        "vendor": vendor,
+                        "variant_id":           v["id"],
+                        "product_id":           product_id,
+                        "inventory_item_id":    v["inventory_item_id"],
+                        "stock":                v["inventory_quantity"],
+                        "title":                v.get("title", ""),
+                        "vendor":               vendor,
                         "inventory_management": v.get("inventory_management"),
                     }
                     shopify_products[product_id]["skus"].append(sku)
-
         link = r.headers.get("Link", "")
         page_url = None
         for part in link.split(","):
             if 'rel="next"' in part:
                 page_url = part.split(";")[0].strip().strip("<>")
-
     log.info(f"Shopify: {len(shopify_skus)} Varianten, {len(shopify_products)} Produkte geladen")
     return shopify_skus, shopify_products
-
-
-def enable_inventory_tracking(variant_id: int, max_retries: int = 5) -> bool:
-    """
-    Aktiviert Inventory-Tracking für eine Variante (inventory_management = 'shopify').
-    Muss aufgerufen werden BEVOR inventory_levels/set.json verwendet wird.
-    Gibt True zurück wenn erfolgreich, False wenn fehlgeschlagen.
-    """
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-        "Content-Type": "application/json",
-    }
-
-    # Vorbeugend warten – BEVOR der Request gesendet wird
-    time.sleep(SHOPIFY_REQUEST_DELAY)
-
-    for attempt in range(max_retries):
-        r = requests.put(
-            f"https://{SHOPIFY_SHOP}/admin/api/2024-01/variants/{variant_id}.json",
-            json={"variant": {"id": variant_id, "inventory_management": "shopify"}},
-            headers=headers, timeout=15,
-        )
-
-        if r.status_code == 200:
-            return True
-
-        elif r.status_code == 429:
-            retry_after = float(r.headers.get("Retry-After", 10))
-            log.warning(f"    429 Rate Limit (Tracking-Aktivierung) – warte {retry_after:.0f}s...")
-            time.sleep(retry_after + 1)
-
-        else:
-            log.warning(f"    HTTP {r.status_code} beim Aktivieren von Tracking (Versuch {attempt+1}/{max_retries})")
-            time.sleep(3 * (attempt + 1))
-
-    log.error(f"    Tracking konnte nicht aktiviert werden für Variante {variant_id}")
-    return False
 
 
 def get_shopify_location_id() -> str:
@@ -489,86 +509,73 @@ def get_shopify_location_id() -> str:
     return str(locs[0]["id"])
 
 
-def update_shopify_stock(inventory_item_id: int, quantity: int, location_id: str, max_retries: int = 5):
-    """
-    Setzt den Lagerstand in Shopify.
-    - Wartet SHOPIFY_REQUEST_DELAY Sekunden VOR jedem Request (vorbeugend)
-    - Bei 429 (Too Many Requests): wartet Retry-After Sekunden + nochmal versuchen
-    - Bei 422 (Unprocessable Entity): überspringen, nicht retrien
-    """
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-        "Content-Type": "application/json",
-    }
-
-    # Vorbeugend warten – BEVOR der Request gesendet wird
-    # Shopify erlaubt 2 Req/Sek, wir bleiben mit 0.6s sicher darunter
+def enable_inventory_tracking(variant_id: int, max_retries: int = 5) -> bool:
+    headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}
     time.sleep(SHOPIFY_REQUEST_DELAY)
+    for attempt in range(max_retries):
+        r = requests.put(
+            f"https://{SHOPIFY_SHOP}/admin/api/2024-01/variants/{variant_id}.json",
+            json={"variant": {"id": variant_id, "inventory_management": "shopify"}},
+            headers=headers, timeout=15,
+        )
+        if r.status_code == 200:
+            return True
+        elif r.status_code == 429:
+            wait = float(r.headers.get("Retry-After", 10))
+            log.warning(f"    429 Rate Limit (Tracking) – warte {wait:.0f}s...")
+            time.sleep(wait + 1)
+        else:
+            log.warning(f"    HTTP {r.status_code} beim Tracking-Aktivieren (Versuch {attempt+1})")
+            time.sleep(3 * (attempt + 1))
+    log.error(f"    Tracking konnte nicht aktiviert werden für Variante {variant_id}")
+    return False
 
+
+def update_shopify_stock(inventory_item_id: int, quantity: int,
+                         location_id: str, max_retries: int = 5):
+    headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}
+    time.sleep(SHOPIFY_REQUEST_DELAY)
     for attempt in range(max_retries):
         r = requests.post(
             f"https://{SHOPIFY_SHOP}/admin/api/2024-01/inventory_levels/set.json",
-            json={"location_id": location_id, "inventory_item_id": inventory_item_id, "available": quantity},
-            headers=headers, timeout=15
+            json={"location_id": location_id,
+                  "inventory_item_id": inventory_item_id,
+                  "available": quantity},
+            headers=headers, timeout=15,
         )
-
         if r.status_code == 200:
-            return  # Erfolg
-
+            return
         elif r.status_code == 429:
-            # Rate Limit erreicht → warten und nochmal
-            retry_after = float(r.headers.get("Retry-After", 10))
-            log.warning(f"    429 Rate Limit – warte {retry_after:.0f}s (Versuch {attempt+1}/{max_retries})...")
-            time.sleep(retry_after + 1)
-
+            wait = float(r.headers.get("Retry-After", 10))
+            log.warning(f"    429 Rate Limit – warte {wait:.0f}s (Versuch {attempt+1})...")
+            time.sleep(wait + 1)
         elif r.status_code == 422:
-            # Ungültige inventory_item_id → nicht retrien, einfach überspringen
             log.warning(f"    422 Unprocessable – inventory_item_id {inventory_item_id} ungültig, übersprungen.")
             return
-
         else:
-            # Anderer Fehler → kurz warten und nochmal
             log.warning(f"    HTTP {r.status_code} – Versuch {attempt+1}/{max_retries}...")
             time.sleep(3 * (attempt + 1))
-
-    # Alle Versuche fehlgeschlagen
-    raise Exception(f"Shopify Update fehlgeschlagen nach {max_retries} Versuchen (inventory_item_id={inventory_item_id})")
+    raise Exception(f"Shopify Update fehlgeschlagen nach {max_retries} Versuchen (id={inventory_item_id})")
 
 
 def set_product_published(product_id: int, published: bool, max_retries: int = 5) -> bool:
-    """
-    Setzt ein Produkt auf sichtbar (published=True) oder unsichtbar (published=False).
-    Wird aufgerufen wenn:
-      - Alle Varianten eines Produkts Lagerstand 0 haben → verstecken
-      - Mindestens eine Variante > 0 hat → wieder sichtbar machen
-    Sollux-Produkte werden NIE hier aufgerufen (Schutz in run_sync).
-    """
-    headers = {
-        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-        "Content-Type": "application/json",
-    }
-
+    headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"}
     time.sleep(SHOPIFY_REQUEST_DELAY)
-
     for attempt in range(max_retries):
         r = requests.put(
             f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products/{product_id}.json",
             json={"product": {"id": product_id, "published": published}},
             headers=headers, timeout=15,
         )
-
         if r.status_code == 200:
             return True
-
         elif r.status_code == 429:
-            retry_after = float(r.headers.get("Retry-After", 10))
-            log.warning(f"    429 Rate Limit (published) – warte {retry_after:.0f}s...")
-            time.sleep(retry_after + 1)
-
+            wait = float(r.headers.get("Retry-After", 10))
+            log.warning(f"    429 Rate Limit (published) – warte {wait:.0f}s...")
+            time.sleep(wait + 1)
         else:
-            log.warning(f"    HTTP {r.status_code} beim Setzen von published={published} (Versuch {attempt+1}/{max_retries})")
+            log.warning(f"    HTTP {r.status_code} beim Setzen published={published} (Versuch {attempt+1})")
             time.sleep(3 * (attempt + 1))
-
     log.error(f"    published konnte nicht gesetzt werden für Produkt {product_id}")
     return False
 
@@ -588,7 +595,7 @@ def get_sheets_client():
     return gspread.authorize(creds)
 
 
-def export_to_sheets(new_products: list, delisted: list):
+def export_to_sheets(new_products: list, delisted: list, all_elux: list):
     gc = get_sheets_client()
     sh = gc.open_by_key(SHEETS_ID)
     ts = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -599,13 +606,17 @@ def export_to_sheets(new_products: list, delisted: list):
         ws.clear()
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet("Neue Produkte", 5000, 15)
-
-    rows = [["SKU","Name","Kategorie","Beschreibung Details","Beschreibung Mehr","Lagerstand","Preis","Maße","Farbe","IP","Watt","Bild-URL (Haupt)","Alle Bild-URLs","Produkt-URL","Datum"]]
+    rows = [["SKU","Name","Kategorie","Beschreibung Details","Beschreibung Mehr",
+             "Lagerstand","Preis","Maße","Farbe","IP","Watt",
+             "Bild-URL (Haupt)","Alle Bild-URLs","Produkt-URL","Datum"]]
     for v in new_products:
-        rows.append([v.sku, v.name, v.category, v.description_details[:500], v.description_more[:300],
-                     v.stock, v.price, v.dimensions, v.color, v.ip_rating, v.watt, v.image_url, v.image_urls, v.product_url, ts])
+        rows.append([v.sku, v.name, v.category,
+                     v.description_details[:500], v.description_more[:300],
+                     v.stock, v.price, v.dimensions, v.color,
+                     v.ip_rating, v.watt, v.image_url, v.image_urls,
+                     v.product_url, ts])
     ws.update(rows, "A1")
-    ws.format("A1:N1", {"textFormat": {"bold": True}})
+    ws.format("A1:O1", {"textFormat": {"bold": True}})
 
     # Tab B: Nicht mehr lieferbar
     try:
@@ -613,15 +624,30 @@ def export_to_sheets(new_products: list, delisted: list):
         ws2.clear()
     except gspread.WorksheetNotFound:
         ws2 = sh.add_worksheet("Nicht mehr lieferbar", 2000, 7)
-
     rows2 = [["SKU","Name","Produkt-ID","Varianten-ID","Alter Bestand","Aktion","Datum"]]
     for p in delisted:
-        rows2.append([p["sku"], p.get("title",""), p.get("product_id",""), p.get("variant_id",""),
-                      p.get("stock",0), "Lagerstand auf 0 gesetzt", ts])
+        rows2.append([p["sku"], p.get("title",""), p.get("product_id",""),
+                      p.get("variant_id",""), p.get("stock",0),
+                      "Lagerstand auf 0 gesetzt", ts])
     ws2.update(rows2, "A1")
     ws2.format("A1:G1", {"textFormat": {"bold": True}})
 
-    log.info(f"Sheets: {len(new_products)} neue + {len(delisted)} ausgelistete Produkte exportiert")
+    # Tab C: Alle Elux Produkte (SKU + Name + Lagerstand)
+    try:
+        ws3 = sh.worksheet("Alle Elux Produkte")
+        ws3.clear()
+    except gspread.WorksheetNotFound:
+        ws3 = sh.add_worksheet("Alle Elux Produkte", 6000, 5)
+    rows3 = [["SKU","Name","Kategorie","Lagerstand","Produkt-URL"]]
+    for v in sorted(all_elux, key=lambda x: x.sku):
+        rows3.append([v.sku, v.name, v.category, v.stock, v.product_url])
+    ws3.update(rows3, "A1")
+    ws3.format("A1:E1", {"textFormat": {"bold": True}})
+
+    log.info(
+        f"Sheets: {len(new_products)} neue + {len(delisted)} ausgelistete + "
+        f"{len(all_elux)} gesamt exportiert"
+    )
 
 
 def run_sync():
@@ -629,27 +655,28 @@ def run_sync():
     log.info(f"elux → Shopify Sync: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
     log.info("=" * 60)
 
-    log.info("\n[1/4] Scrape elux...")
+    log.info("\n[1/5] Scrape elux...")
     elux_variants = scrape_all()
-    elux_by_sku = {v.sku: v for v in elux_variants}
+    elux_by_sku   = {v.sku: v for v in elux_variants}
 
     with open("elux_products_raw.json", "w", encoding="utf-8") as f:
         json.dump([vars(v) for v in elux_variants], f, ensure_ascii=False, indent=2)
 
-    log.info("\n[2/4] Lade Shopify...")
+    log.info("\n[2/5] Lade Shopify...")
     shopify_skus, shopify_products = get_shopify_skus()
     location_id = get_shopify_location_id()
 
-    log.info("\n[3/4] Abgleich...")
-    updated, new_products, delisted, errors, skipped_protected, tracking_enabled = [], [], [], [], [], []
-    hidden_products, restored_products = [], []
+    log.info("\n[3/5] Abgleich...")
+    updated          : list = []
+    new_products     : list = []
+    delisted         : list = []
+    errors           : list = []
+    skipped_protected: list = []
+    tracking_enabled : list = []
 
-    # Elux-SKUs → Shopify aktualisieren
     for sku, ev in elux_by_sku.items():
         if sku in shopify_skus:
             sv = shopify_skus[sku]
-
-            # Tracking aktivieren falls nötig
             if sv.get("inventory_management") != "shopify":
                 log.info(f"  🔧 Tracking aktivieren für {sku}...")
                 ok = enable_inventory_tracking(sv["variant_id"])
@@ -658,9 +685,7 @@ def run_sync():
                     errors.append(sku)
                     continue
                 tracking_enabled.append(sku)
-                # Nach Aktivierung kurz warten damit Shopify den Status übernimmt
                 time.sleep(1)
-
             if sv["stock"] != ev.stock:
                 try:
                     update_shopify_stock(sv["inventory_item_id"], ev.stock, location_id)
@@ -672,19 +697,13 @@ def run_sync():
         else:
             new_products.append(ev)
 
-    # Shopify-SKUs die nicht in Elux sind → auf 0 setzen
-    # ABER: Geschützte Lieferanten (Sollux Lighting etc.) NIEMALS anfassen!
     for sku, sv in shopify_skus.items():
         if sku not in elux_by_sku:
             vendor = sv.get("vendor", "")
-
-            # ── SCHUTZ ──────────────────────────────────────────────────
             if is_protected_sku(sku, vendor):
                 log.info(f"  🔒 Geschützt (nicht auf 0): {sku} [{vendor}]")
                 skipped_protected.append(sku)
                 continue
-            # ────────────────────────────────────────────────────────────
-
             if sv["stock"] != 0:
                 try:
                     update_shopify_stock(sv["inventory_item_id"], 0, location_id)
@@ -692,49 +711,30 @@ def run_sync():
                 except Exception as e:
                     log.error(f"  ✗ Auslistung {sku}: {e}")
             delisted.append({**sv, "sku": sku})
-            # Hinweis: Sollux-Produkte landen nie hier (continue oben)
 
-    log.info("\n[4/4] Produkt-Sichtbarkeit prüfen...")
-    # Alle Elux-Produkte: alle Varianten = 0 → verstecken / mind. 1 > 0 → zeigen
-    # Sollux-Produkte werden NIEMALS angefasst!
+    log.info("\n[4/5] Produkt-Sichtbarkeit prüfen...")
+    restored_products: list = []
     for product_id, pdata in shopify_products.items():
         vendor = pdata.get("vendor", "")
-
-        # Sollux komplett überspringen
         if any(vendor.strip() == v for v in PROTECTED_VENDORS):
             continue
         if pdata["skus"] and all(is_protected_sku(s) for s in pdata["skus"]):
             continue
-
-        # Gesamtlagerstand des Produkts berechnen (aktualisierte Werte)
-        total_stock = 0
-        for sku in pdata["skus"]:
-            if sku in elux_by_sku:
-                total_stock += elux_by_sku[sku].stock
-            elif sku in shopify_skus:
-                total_stock += shopify_skus[sku]["stock"]
-
-        currently_published = pdata["published"]
-
-        if total_stock == 0 and currently_published:
-            ok = set_product_published(product_id, False)
-            if ok:
-                log.info(f"  👁 Versteckt (alle 0): Produkt {product_id} [{vendor}]")
-                hidden_products.append(product_id)
-            else:
-                log.error(f"  ✗ Konnte Produkt {product_id} nicht verstecken")
-
-        elif total_stock > 0 and not currently_published:
+        total_stock = sum(
+            elux_by_sku[s].stock if s in elux_by_sku
+            else shopify_skus.get(s, {}).get("stock", 0)
+            for s in pdata["skus"]
+        )
+        # Verstecken ist deaktiviert – wird via Shopify Workflow gesteuert
+        # Wieder aktivieren wenn Produkt auf Entwurf aber Lagerstand > 0
+        if total_stock > 0 and not pdata["published"]:
             ok = set_product_published(product_id, True)
             if ok:
                 log.info(f"  ✅ Wieder sichtbar: Produkt {product_id} [{vendor}]")
                 restored_products.append(product_id)
-            else:
-                log.error(f"  ✗ Konnte Produkt {product_id} nicht aktivieren")
 
     log.info("\n[5/5] Google Sheets Export...")
-    if new_products or delisted:
-        export_to_sheets(new_products, delisted)
+    export_to_sheets(new_products, delisted, elux_variants)
 
     log.info("\n" + "=" * 60)
     log.info(f"Aktualisiert:        {len(updated)}")
@@ -742,7 +742,6 @@ def run_sync():
     log.info(f"Neu (Sheet A):       {len(new_products)}")
     log.info(f"Ausgelistet:         {len(delisted)}")
     log.info(f"Geschützt (Sollux):  {len(skipped_protected)}")
-    log.info(f"Versteckt (alle 0):  {len(hidden_products)}")
     log.info(f"Wieder sichtbar:     {len(restored_products)}")
     log.info(f"Fehler:              {len(errors)}")
     log.info("=" * 60)
