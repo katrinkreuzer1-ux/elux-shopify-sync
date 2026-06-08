@@ -1,8 +1,8 @@
-name: elux-shopify-sync
+name: Dreamlove → Shopify Sync
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 env:
@@ -11,42 +11,48 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Python 3.11
+      - name: Python 3.11 einrichten
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Dependencies installieren
         run: pip install -r requirements.txt
 
-      - name: Write Google credentials
+      - name: Google Credentials schreiben
         run: echo '${{ secrets.GOOGLE_CREDS_JSON_CONTENT }}' > google_creds.json
 
-      - name: Run sync
+      - name: Test Single SKU
         env:
-          SHOPIFY_SHOP_URL:    ${{ secrets.SHOPIFY_SHOP_URL }}
-          SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
-          GOOGLE_SHEETS_ID:    ${{ secrets.GOOGLE_SHEETS_ID }}
-          GOOGLE_CREDS_JSON:   google_creds.json
-        run: python elux_scraper.py
+          SHOPIFY_SHOP_URL:      ${{ secrets.SHOPIFY_SHOP_URL }}
+          SHOPIFY_CLIENT_ID:     ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+        run: python test_single.py
 
-      - name: Upload logs
+      - name: Sync ausführen
+        env:
+          SHOPIFY_SHOP_URL:      ${{ secrets.SHOPIFY_SHOP_URL }}
+          SHOPIFY_CLIENT_ID:     ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          GOOGLE_SHEETS_ID:      ${{ secrets.GOOGLE_SHEETS_ID }}
+          GOOGLE_CREDS_JSON:     google_creds.json
+        run: python dreamlove_sync.py
+
+      - name: Log hochladen (immer, auch bei Fehler)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sync-log-${{ github.run_number }}
-          path: |
-            elux_sync.log
-            elux_products_raw.json
+          path: dreamlove_sync.log
           retention-days: 30
 
-      - name: Cleanup credentials
+      - name: Credentials aufräumen
         if: always()
         run: rm -f google_creds.json
