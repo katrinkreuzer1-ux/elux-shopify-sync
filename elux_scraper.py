@@ -171,7 +171,7 @@ def extract_sku(line: str) -> str:
         candidate = rest[:lager_pos].strip() if lager_pos >= 0 else rest.strip()
         for part in candidate.split():
             if re.search(r'[äöüÄÖÜß]', part): break
-            if re.match(r'^\d{4,}$', part): break
+            if re.match(r'^\d{5,}$', part): break  # 4-stellig erlaubt (z.B. 20-8486 1250)
             if re.match(r'^[A-Z][a-z]{3,}', part): break
             if re.match(r'^[a-z]{4,}$', part): break
             if re.match(r'^[A-Z]{4,}$', part) and core_is_complex: break
@@ -181,7 +181,7 @@ def extract_sku(line: str) -> str:
             if part in SKU_STOP_WORDS_NO_LAGER: break
             if any(part.startswith(sw) for sw in {"LED", "Anbaul", "Einbaul", "Leuchte"}): break
             if re.search(r'[äöüÄÖÜß]', part): break
-            if re.match(r'^\d{4,}$', part): break
+            if re.match(r'^\d{5,}$', part): break  # 4-stellig erlaubt (z.B. 20-8486 1250)
             if re.match(r'^[A-Z][a-z]{3,}', part): break
             if re.match(r'^[a-z]{4,}$', part): break
             if re.match(r'^[A-Z]{4,}$', part) and core_is_complex: break
