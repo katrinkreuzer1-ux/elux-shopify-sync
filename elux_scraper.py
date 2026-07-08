@@ -55,12 +55,54 @@ SHOPIFY_REQUEST_DELAY = 0.55  # 1.8 Req/Sek → unter Shopify Limit von 2/Sek
 PROTECTED_VENDORS     = ["Sollux Lighting"]
 PROTECTED_SKU_PREFIXES = ["SL.", "TH."]
 
+# SKUs die immer extra gesucht werden (unabhängig vom Kategorien-Scraping)
+# Hier SKUs eintragen die nicht in den Kategorien gefunden werden
+EXTRA_SEARCH_SKUS = [
+    # 54-DIFF FAMOSA Ersatzdiffuser
+    "54-DIFF FAMOSA PL ANTHRAZIT",
+    "54-DIFF FAMOSA PL SCHWARZ",
+    "54-DIFF FAMOSA PL SILBER",
+    "54-DIFF FAMOSA PL BRAUN",
+    "54-DIFF FAMOSA WL ANTHRAZIT",
+    "54-DIFF FAMOSA WL SCHWARZ",
+    "54-DIFF FAMOSA WL SILBER",
+    "54-DIFF FAMOSA WL BRAUN",
+    # 85-VS Versus Anbauleuchten
+    "85-VS60-10/4/IP54",
+    "85-VS90-12,5/4/IP54",
+    "85-VS120-19/4/IP54",
+    "85-VS150-28/4/IP54",
+    "85-VS60-10/3/IP54",
+    "85-VS90-12,5/3/IP54",
+    "85-VS120-19/3/IP54",
+    "85-VS150-28/3/IP54",
+    # EUTRAC SX Stromschienen
+    "SX 1 1209-2",
+    "SX 0 1217-2",
+    "SX 1 1212-2",
+    "SX 1 1213-2",
+    "SX 1 1212-6",
+    "SX 1 1213-6",
+    "SX 1 1214-2",
+    "SX 1 1214-6",
+    "SX 1 1215-2",
+    "SX 1 1215-6",
+    # 88-N Zubehör
+    "88-N68196",
+    "88-N68195",
+    "88-N68202",
+    "88-N68201",
+    "88-N68218",
+]
+
 # Stoppwörter für SKU-Erkennung (Zeilen OHNE "Lagerstand")
 SKU_STOP_WORDS_NO_LAGER = {
     "LED", "Wand", "Decke", "Anbaul", "Einbaul", "Hange",
     "Strahler", "Leuchte", "Profil", "Lampe", "Treiber",
     "Preis", "Mehr", "Details", "inkl", "ohne", "mit",
-    "weiß", "schwarz", "grau", "silber", "chrom", "gold", "nickel", "braun", "beige",
+    # Farben NUR als Kleinbuchstaben stoppen - Großbuchstaben können SKU-Teil sein
+    # z.B. 54-DIFF FAMOSA PL ANTHRAZIT, 54-DIFF FAMOSA PL SCHWARZ
+    "weiß", "grau", "silber", "chrom", "gold", "nickel", "braun", "beige",
 }
 
 ELUX_CATEGORY_URLS = [
@@ -105,6 +147,9 @@ ELUX_CATEGORY_URLS = [
     "https://shop.elux-licht.at/shop/pub/elux/produkte/zubehor/pfahle-und-masten.html",
     "https://shop.elux-licht.at/shop/pub/elux/coming-soon.html",
     "https://shop.elux-licht.at/shop/pub/elux/derzeit-ist-keine-aktion-verfugbar.html",
+    # Einzelprodukte die in keiner Kategorie gelistet sind
+    "https://shop.elux-licht.at/shop/pub/elux/einbaustr-panno-led-8w-230v-3000k-850nlm-weiss.html",
+    "https://shop.elux-licht.at/shop/pub/elux/beril-m-l.html",
 ]
 
 
@@ -156,7 +201,7 @@ def extract_sku(line: str) -> str:
     """
     # Bereinige "→ X" am Ende (kommt manchmal in Tab-Zeilen vor)
     line = re.sub(r'\s*→\s*\d+\s*$', '', line).strip()
-    m = re.match(r'^\d{2,}-[A-Za-z0-9][A-Za-z0-9/\-\.]*', line)
+    m = re.match(r'^\d{2,}-[A-Za-z0-9][A-Za-z0-9/\-\.,]*', line)  # Komma erlaubt (z.B. 85-VS90-12,5/4/IP54)
     if not m:
         return ""
     sku_core = m.group(0)
@@ -185,7 +230,8 @@ def extract_sku(line: str) -> str:
             if re.match(r'^[A-Z][a-z]{3,}', part): break
             if re.match(r'^[a-z]{4,}$', part): break
             if re.match(r'^[A-Z]{4,}$', part) and core_is_complex: break
-            if len(part) <= 5 or re.search(r'[0-9/\-\.]', part):
+            # Erlaubt: kurz ODER Sonderzeichen ODER reines GROSSWORT (wenn Kern nicht complex)
+            if len(part) <= 5 or re.search(r'[0-9/\-\.,]', part) or re.match(r'^[A-Z]+$', part):
                 sku += " " + part
             else:
                 break
@@ -396,11 +442,20 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
         save_variant()
 
     # ── Fallback: Lagerstand von oben der Seite ──────────────────
-    # Wenn Tab keinen Lagerstand hat (stock=0) UND oben steht ein Lagerstand
-    # Gilt für alle Layouts (auch Layout A kann Lagerstand nur oben haben)
-    if len(variants) == 1 and variants[0].stock == 0 and top_stock > 0:
-        log.info(f"    Fallback: stock={top_stock} von oben der Seite ({'Layout A' if is_layout_a else 'Layout B'})")
-        variants[0].stock = top_stock
+    # Wenn Tab keinen Lagerstand hat (alle stock=0) UND oben steht ein Lagerstand
+    # Gilt für alle Layouts, auch wenn mehrere Varianten vorhanden
+    if top_stock > 0 and all(v.stock == 0 for v in variants):
+        if len(variants) == 1:
+            # Einzelne Variante → direkt setzen
+            log.info(f"    Fallback (1 Variante): stock={top_stock} von oben der Seite")
+            variants[0].stock = top_stock
+        else:
+            # Mehrere Varianten → Gesamtlagerstand bekannt aber nicht pro Variante
+            # Setze alle Varianten auf -1 als Signal "nicht auf 0 setzen"
+            # In run_sync(): wenn elux stock == -1 → Shopify-Wert behalten
+            log.info(f"    Fallback ({len(variants)} Varianten): top_stock={top_stock} – Shopify-Wert behalten")
+            for v in variants:
+                v.stock = -1  # -1 = "unbekannt, Shopify-Wert behalten"
 
     # ── Fallback: SKU direkt von der Seite ────────────────────────
     if not variants:
@@ -456,13 +511,34 @@ def scrape_all() -> list[EluxVariant]:
     return all_variants
 
 
+
+def search_elux_product(sku: str) -> Optional[str]:
+    """
+    Sucht eine SKU auf Elux und gibt die Produkt-URL zurück.
+    Wird verwendet für SKUs die nicht in den Kategorien gefunden wurden.
+    """
+    import urllib.parse
+    search_url = (
+        f"https://shop.elux-licht.at/shop/pub/catalogsearch/result/"
+        f"?q={urllib.parse.quote(sku)}"
+    )
+    soup = get_soup(search_url)
+    if not soup:
+        return None
+    # Erstes Produkt aus Suchergebnis
+    for sel in ["a.product-item-link", ".product-item-info a", ".product-item h2 a"]:
+        a = soup.select_one(sel)
+        if a and a.get("href"):
+            return a.get("href")
+    return None
+
 def get_shopify_skus() -> tuple[dict, dict]:
     headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
     shopify_skus: dict     = {}
     shopify_products: dict = {}
     page_url = (
         f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json"
-        f"?limit=250&fields=id,vendor,published_at,variants"
+        f"?limit=250&fields=id,vendor,published_at,variants&status=any"  # status=any → auch Entwürfe laden
     )
     while page_url:
         r = requests.get(page_url, headers=headers, timeout=30)
@@ -687,7 +763,11 @@ def run_sync():
                     continue
                 tracking_enabled.append(sku)
                 time.sleep(1)
-            if sv["stock"] != ev.stock:
+            # stock == -1 bedeutet: Lagerstand unbekannt (mehrere Varianten, kein Tab-Lagerstand)
+            # → Shopify-Wert behalten, NICHT auf 0 setzen
+            if ev.stock == -1:
+                log.info(f"  ⏭ {sku}: Lagerstand unbekannt → Shopify-Wert {sv['stock']} behalten")
+            elif sv["stock"] != ev.stock:
                 try:
                     update_shopify_stock(sv["inventory_item_id"], ev.stock, location_id)
                     log.info(f"  ✓ {sku}: {sv['stock']} → {ev.stock}")
@@ -713,7 +793,53 @@ def run_sync():
                     log.error(f"  ✗ Auslistung {sku}: {e}")
             delisted.append({**sv, "sku": sku})
 
-    log.info("\n[4/5] Produkt-Sichtbarkeit prüfen...")
+    # ── Extra SKUs suchen + EXTRA_SEARCH_SKUS Liste ──────────────
+    log.info("\n[4/5] Extra SKUs suchen...")
+    searched = 0
+
+    # Kombiniere: EXTRA_SEARCH_SKUS + alle Shopify-SKUs die nicht gescrapt wurden
+    extra_skus = list(EXTRA_SEARCH_SKUS)
+    for sku in shopify_skus:
+        if sku not in elux_by_sku and not is_protected_sku(sku, shopify_skus[sku].get("vendor","")) and sku not in extra_skus:
+            extra_skus.append(sku)
+
+    for sku in extra_skus:
+        sv = shopify_skus.get(sku)
+        if not sv:
+            log.info(f"  ⚠ {sku}: nicht in Shopify → übersprungen")
+            continue
+        if sku in elux_by_sku and sku not in EXTRA_SEARCH_SKUS:
+            continue
+        # Suche auf Elux
+        product_url = search_elux_product(sku)
+        if product_url:
+            log.info(f"  🔍 Gefunden via Suche: {sku} → {product_url.split('/')[-1]}")
+            category = "Suche"
+            vs = parse_product(product_url, category)
+            # Finde die passende Variante
+            for v in vs:
+                if v.sku == sku:
+                    elux_by_sku[sku] = v
+                    searched += 1
+                    # Sofort Lagerstand setzen wenn abweichend
+                    if sv.get("inventory_management") != "shopify":
+                        log.info(f"  🔧 Tracking aktivieren für {sku}...")
+                        ok = enable_inventory_tracking(sv["variant_id"])
+                        if ok:
+                            tracking_enabled.append(sku)
+                            import time as _t; _t.sleep(1)
+                    if sv["stock"] != v.stock and v.stock != -1:
+                        try:
+                            update_shopify_stock(sv["inventory_item_id"], v.stock, location_id)
+                            log.info(f"  ✓ {sku}: {sv['stock']} → {v.stock}")
+                            updated.append(sku)
+                        except Exception as e:
+                            log.error(f"  ✗ {sku}: {e}")
+                            errors.append(sku)
+                    break
+    log.info(f"  Gefunden via Suche: {searched} SKUs")
+
+    log.info("\n[5/5] Produkt-Sichtbarkeit prüfen...")
     restored_products: list = []
     for product_id, pdata in shopify_products.items():
         vendor = pdata.get("vendor", "")
