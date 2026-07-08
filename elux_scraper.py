@@ -320,13 +320,13 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
                 description_more = txt
                 break
 
-    # ── Lagerstand oben (Layout B Fallback) ───────────────────────
-    # Wird nur verwendet wenn Layout B UND Tab keinen Lagerstand liefert
+    # ── Lagerstand oben (Fallback für alle Layouts) ──────────────
+    # Wird verwendet wenn Tab keinen Lagerstand liefert
+    # Auch Layout A Produkte können Lagerstand nur oben haben (z.B. 54-11106PK/W/W)
     top_stock = 0
-    if not is_layout_a:
-        m = re.search(r'Lagerstand[:\s]+(\d+)\s*Stk', page_text, re.I)
-        if m:
-            top_stock = int(m.group(1))
+    m_top = re.search(r'Lagerstand[:\s]+(\d+)\s*Stk', page_text, re.I)
+    if m_top:
+        top_stock = int(m_top.group(1))
 
     # ── Ausführungs-Tab → Varianten ───────────────────────────────
     variants: list[EluxVariant] = []
@@ -395,10 +395,11 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
 
         save_variant()
 
-    # ── Layout B Fallback: Lagerstand von oben ────────────────────
-    # Nur wenn: Layout B + genau 1 Variante + stock=0 + top_stock > 0
-    if not is_layout_a and len(variants) == 1 and variants[0].stock == 0 and top_stock > 0:
-        log.info(f"    Layout B Fallback: stock={top_stock} von oben der Seite")
+    # ── Fallback: Lagerstand von oben der Seite ──────────────────
+    # Wenn Tab keinen Lagerstand hat (stock=0) UND oben steht ein Lagerstand
+    # Gilt für alle Layouts (auch Layout A kann Lagerstand nur oben haben)
+    if len(variants) == 1 and variants[0].stock == 0 and top_stock > 0:
+        log.info(f"    Fallback: stock={top_stock} von oben der Seite ({'Layout A' if is_layout_a else 'Layout B'})")
         variants[0].stock = top_stock
 
     # ── Fallback: SKU direkt von der Seite ────────────────────────
@@ -408,7 +409,7 @@ def parse_product(url: str, category: str) -> list[EluxVariant]:
             if el:
                 sku = el.get_text(strip=True)
                 if sku:
-                    stock = top_stock if not is_layout_a else 0
+                    stock = top_stock  # Fallback für alle Layouts
                     variants.append(EluxVariant(
                         sku=sku, name=product_name,
                         description_details=description_details,
