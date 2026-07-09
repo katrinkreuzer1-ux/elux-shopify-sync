@@ -533,42 +533,56 @@ def search_elux_product(sku: str) -> Optional[str]:
     return None
 
 def get_shopify_skus() -> tuple[dict, dict]:
-    headers = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
+    """
+    Lädt alle Shopify-Varianten: aktive + Entwürfe + Archivierte.
+    status=any ist kein gültiger Wert → 3 separate Requests nötig.
+    """
+    headers  = {"X-Shopify-Access-Token": SHOPIFY_TOKEN}
     shopify_skus: dict     = {}
     shopify_products: dict = {}
-    page_url = (
-        f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json"
-        f"?limit=250&fields=id,vendor,published_at,variants&status=any"  # status=any → auch Entwürfe laden
-    )
-    while page_url:
-        r = requests.get(page_url, headers=headers, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        for product in data.get("products", []):
-            vendor     = product.get("vendor", "")
-            product_id = product["id"]
-            is_published = product.get("published_at") is not None
-            shopify_products[product_id] = {
-                "vendor": vendor, "published": is_published, "skus": []
-            }
-            for v in product.get("variants", []):
-                if v.get("sku"):
-                    sku = v["sku"].strip()
-                    shopify_skus[sku] = {
-                        "variant_id":           v["id"],
-                        "product_id":           product_id,
-                        "inventory_item_id":    v["inventory_item_id"],
-                        "stock":                v["inventory_quantity"],
-                        "title":                v.get("title", ""),
-                        "vendor":               vendor,
-                        "inventory_management": v.get("inventory_management"),
+
+    def load_by_status(status: str):
+        page_url = (
+            f"https://{SHOPIFY_SHOP}/admin/api/2024-01/products.json"
+            f"?limit=250&fields=id,vendor,published_at,variants&status={status}"
+        )
+        count = 0
+        while page_url:
+            r = requests.get(page_url, headers=headers, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            for product in data.get("products", []):
+                vendor     = product.get("vendor", "")
+                product_id = product["id"]
+                is_published = product.get("published_at") is not None
+                if product_id not in shopify_products:
+                    shopify_products[product_id] = {
+                        "vendor": vendor, "published": is_published, "skus": []
                     }
-                    shopify_products[product_id]["skus"].append(sku)
-        link = r.headers.get("Link", "")
-        page_url = None
-        for part in link.split(","):
-            if 'rel="next"' in part:
-                page_url = part.split(";")[0].strip().strip("<>")
+                for v in product.get("variants", []):
+                    if v.get("sku"):
+                        sku = v["sku"].strip()
+                        shopify_skus[sku] = {
+                            "variant_id":           v["id"],
+                            "product_id":           product_id,
+                            "inventory_item_id":    v["inventory_item_id"],
+                            "stock":                v["inventory_quantity"],
+                            "title":                v.get("title", ""),
+                            "vendor":               vendor,
+                            "inventory_management": v.get("inventory_management"),
+                        }
+                        shopify_products[product_id]["skus"].append(sku)
+                        count += 1
+            link = r.headers.get("Link", "")
+            page_url = None
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    page_url = part.split(";")[0].strip().strip("<>")
+        log.info(f"  Status={status}: {count} Varianten")
+
+    load_by_status("active")
+    load_by_status("draft")
+
     log.info(f"Shopify: {len(shopify_skus)} Varianten, {len(shopify_products)} Produkte geladen")
     return shopify_skus, shopify_products
 
