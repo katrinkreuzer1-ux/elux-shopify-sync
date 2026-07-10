@@ -3109,13 +3109,25 @@ def search_elux_product(sku: str) -> Optional[str]:
     """
     Sucht eine SKU auf Elux und gibt die Produkt-URL zurück.
     Wird verwendet für SKUs die nicht in den Kategorien gefunden wurden.
+    Verwendet kürzeren Delay (0.5s) da nur Suchergebnisse geladen werden.
     """
     import urllib.parse
     search_url = (
         f"https://shop.elux-licht.at/shop/pub/catalogsearch/result/"
         f"?q={urllib.parse.quote(sku)}"
     )
-    soup = get_soup(search_url)
+    # Kürzerer Delay für Suche
+    time.sleep(0.5)
+    soup = None
+    for attempt in range(3):
+        try:
+            r = session.get(search_url, timeout=25)
+            r.raise_for_status()
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r.text, "lxml")
+            break
+        except Exception:
+            time.sleep(2)
     if not soup:
         return None
     # Erstes Produkt aus Suchergebnis
