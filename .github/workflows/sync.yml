@@ -1,34 +1,28 @@
 name: elux-shopify-sync
-
 on:
   schedule:
     - cron: '0 1 * * *'
   workflow_dispatch:
-
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
+permissions:
+  contents: write   # nötig, damit der Stock-Cache zurückcommitted werden kann
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Write Google credentials
         run: echo '${{ secrets.GOOGLE_CREDS_JSON_CONTENT }}' > google_creds.json
-
       - name: Run sync
         env:
           SHOPIFY_SHOP_URL:    ${{ secrets.SHOPIFY_SHOP_URL }}
@@ -36,7 +30,6 @@ jobs:
           GOOGLE_SHEETS_ID:    ${{ secrets.GOOGLE_SHEETS_ID }}
           GOOGLE_CREDS_JSON:   google_creds.json
         run: python elux_scraper.py
-
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,7 +39,15 @@ jobs:
             elux_sync.log
             elux_products_raw.json
           retention-days: 30
-
+      - name: Commit stock cache
+        if: always()
+        run: |
+          git config user.name "elux-sync-bot"
+          git config user.email "actions@github.com"
+          git add elux_stock_cache.json
+          git diff --staged --quiet || git commit -m "Update stock cache [skip ci]"
+          git pull --rebase origin main
+          git push
       - name: Cleanup credentials
         if: always()
         run: rm -f google_creds.json
