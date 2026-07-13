@@ -14,6 +14,14 @@ FIXES 01.06.2026:
 - Verstecken deaktiviert, Wieder-Aktivieren aktiv
 - Tab C: Alle Elux Produkte (SKU, Name, Lagerstand)
 - Node.js 24 in sync.yml
+
+FIXES 13.07.2026 (Performance):
+- EXTRA_SEARCH_SKUS dedupliziert
+- Bug gefixt: SKUs die bereits gescrapt wurden, wurden trotzdem nochmal
+  via Suche geprüft, wenn sie zusätzlich in EXTRA_SEARCH_SKUS standen
+- Persistenter Stock-Cache (elux_stock_cache.json): SKUs die wiederholt
+  Lagerstand=0 haben oder nie gefunden werden, werden nicht mehr täglich
+  neu gesucht, sondern nur noch alle paar Tage (siehe CHECK_INTERVAL_*)
 """
 
 import os
@@ -54,6 +62,12 @@ SHOPIFY_REQUEST_DELAY = 0.55  # 1.8 Req/Sek → unter Shopify Limit von 2/Sek
 
 PROTECTED_VENDORS     = ["Sollux Lighting"]
 PROTECTED_SKU_PREFIXES = ["SL.", "TH."]
+
+# ── Stock-Cache Konfiguration (Performance) ──────────────────────
+STOCK_CACHE_PATH               = "elux_stock_cache.json"
+CONSECUTIVE_ZERO_THRESHOLD     = 3   # so oft muss stock=0 hintereinander bestätigt sein
+ZERO_STOCK_CHECK_INTERVAL_DAYS = 3   # danach nur noch alle X Tage prüfen
+NOT_FOUND_CHECK_INTERVAL_DAYS  = 3   # gleiches Intervall für "nicht gefunden"
 
 # SKUs die immer extra gesucht werden (unabhängig vom Kategorien-Scraping)
 # Hier SKUs eintragen die nicht in den Kategorien gefunden werden
@@ -858,7 +872,6 @@ EXTRA_SEARCH_SKUS = [
     "54-12106B/B/W",
     "54-38114M/C",
     "54-50110CE/C",
-    "54-050112/CU",
     "54-0800BA",
     "54-10116FD/B/BS",
     "54-12106B/W/W",
@@ -1807,13 +1820,12 @@ EXTRA_SEARCH_SKUS = [
     "54-7820L/W",
     "54-7864E",
     "54-89012L",
-    "54-9016LA/C",
     "61-LUXA DOB 160",
     "54-69064C/C",
     "54-7820W/C",
     "54-7864F",
     "54-89015",
-    "54-9018L/C",
+    "54-9016LA/C",
     "61-LUXA DOB 200",
     "54-69064C/W",
     "54-7820W/EW",
@@ -1824,7 +1836,7 @@ EXTRA_SEARCH_SKUS = [
     "54-7820W/W",
     "54-7870/C",
     "54-89015AT",
-    "54-9018L/W",
+    "54-9018L/C",
     "61-LUXA DOB 40",
     "54-70036",
     "54-7820WL/W",
@@ -1835,7 +1847,7 @@ EXTRA_SEARCH_SKUS = [
     "54-7822",
     "54-7880/C",
     "54-89015CT",
-    "54-9022L/C",
+    "54-9018L/W",
     "61-LUXA DOB 80",
     "54-7010P",
     "54-7823/C",
@@ -1846,7 +1858,7 @@ EXTRA_SEARCH_SKUS = [
     "54-7823/EW",
     "54-7880/W",
     "54-89015V",
-    "54-9022L/W",
+    "54-9022L/C",
     "61-LUXA DOB ZEBRA 100",
     "54-70112/B/W",
     "54-7823/W",
@@ -2028,7 +2040,6 @@ EXTRA_SEARCH_SKUS = [
     "66-15MC2000BK",
     "66-39OR36K336MW",
     "66-76DR48K3XPSB",
-    "66-83SL24DTW",
     "74-808885",
     "76-4664AN4K",
     "66-15MC3000BK",
@@ -2039,7 +2050,6 @@ EXTRA_SEARCH_SKUS = [
     "66-15PG1000",
     "66-39OR9K336SW",
     "66-76DR72K3HPLB",
-    "66-83SL24K3",
     "74-808921",
     "76-4665AN4K",
     "66-15PG2000",
@@ -2050,7 +2060,7 @@ EXTRA_SEARCH_SKUS = [
     "66-15PG3000",
     "66-41DPL36K3DEM3B",
     "66-83AA09EL",
-    "66-83SL24TW",
+    "66-83SL24DTW",
     "74-808924",
     "76-4936AN4K",
     "66-15SL10K27",
@@ -2103,19 +2113,18 @@ EXTRA_SEARCH_SKUS = [
     "66-83AA11CC150IP",
     "66-85DR90DKKvy",
     "76-1324y3K",
-    "76-5527",
     "66-28PG15K3B",
     "66-44MP20K4M54B",
     "66-83AA11CC150IPRGB",
     "66-86DK31K4MBK",
     "76-1324y4K",
-    "76-5529",
+    "76-5527",
     "66-28PG15K4B",
     "66-44MP20K4S54B",
     "66-83AA11CC150RGB",
     "66-86DK39K4MBK",
     "76-1325y",
-    "76-5538",
+    "76-5529",
     "66-28PG25K3B",
     "66-44MP32K3M54B",
     "66-83AA11CC150TW",
@@ -2210,141 +2219,135 @@ EXTRA_SEARCH_SKUS = [
     "66-51PO27K4L65IB",
     "66-83CL4X1D",
     "66-86PG62K4MBK",
-    "76-1441",
+    "76-14423K",
     "76-9151y4K",
     "66-28VT25K440MEBK",
     "66-55AA05EVC8",
     "66-83CLD1000",
     "66-DIMKITRGBW",
-    "76-14423K",
+    "76-14424K",
     "76-9152y3K",
     "66-28VT25K440MEW",
     "66-55AA05PGCC8",
     "66-83CLD10000",
     "66-DIMKITTW",
-    "76-14424K",
+    "76-1444",
     "76-9152y4K",
     "66-28VT38K340LEBK",
     "66-55AA05PGOC8",
     "66-83CLD2000",
     "73-6350141D",
-    "76-1444",
+    "76-1521GM",
     "79-LC-002-001",
     "66-28VT38K340LEW",
     "66-55AA05QC8",
     "66-83CLD3000",
     "73-6350301",
-    "76-1521GM",
+    "76-1522IN",
     "79-LC-002-002",
     "66-28VT38K440LEBK",
     "66-55AA05VC8",
     "66-83IN1000",
     "73-6350401",
-    "76-1522IN",
+    "76-1523IN",
     "79-LC-002-003",
     "66-28VT38K440LEW",
     "66-55AA06EYC8",
     "66-83LC10024",
     "73-6350501",
-    "76-1523IN",
+    "76-1531GM",
     "79-LC-004-013",
     "66-28VT52K340LEBK",
     "66-55AA06QC8",
     "66-83LC10024D",
     "73-6350601",
-    "76-1531GM",
+    "76-1532IN",
     "79-LC-004-014",
     "66-28VT52K340LEW",
     "66-55AA07QC8",
     "66-83LC10024ISBT",
     "73-6350700",
-    "76-1532IN",
+    "76-1533IN",
     "79-LC-012-004",
     "66-28VT52K440LEBK",
     "66-55AA09C8",
     "66-83LC10024ISD",
     "73-6350801",
-    "76-1533IN",
+    "76-1541GM",
     "79-LC-012-006",
     "66-28VT52K440LEW",
     "66-55AA09DUC8",
     "66-83LC12024IS",
     "73-6350901",
-    "76-1541GM",
+    "76-1542IN",
     "79-LC-012-007",
     "66-38AABCL",
     "66-55AA11",
     "66-83LC15024ISBT",
     "73-6351000",
-    "76-1542IN",
+    "76-1924",
     "79-LC-012-009",
     "66-38AABCM",
     "66-55AA13",
     "66-83LC15024ISD",
     "73-6351441D",
-    "76-1924",
+    "76-1925",
     "79-LC-012-010",
     "66-38VT18K340L65B",
     "66-55AA1330",
     "66-83LC20024IS",
     "73-6351541D",
-    "76-1925",
+    "76-1926",
     "79-LC-012-011",
     "66-38VT18K440L65B",
     "66-55AA14",
     "66-83LC6024",
     "73-6351741D",
-    "76-1926",
+    "76-2101NE3K",
     "79-LC-012-012",
     "66-38VT25K340L65B",
     "66-55AA16C8",
     "66-83LC6024D",
     "73-6351901",
-    "76-2101NE3K",
+    "76-2101NE4K",
     "79-LC-012-014",
     "66-38VT25K440L65B",
     "66-55AA16RC8",
     "66-83LC6024IS",
     "73-6352001",
-    "76-2101NE4K",
+    "76-2105NE3K",
     "79-LC-012-114",
     "66-38WA13K3M65B",
     "66-55DU2000C8",
     "66-83LC6024ISBT",
     "73-6352101",
-    "76-2105NE3K",
+    "76-2105NE4K",
     "85-AC/PB",
     "66-38WA13K4M65B",
     "66-55PG2000C8",
     "66-83LC6024ISD",
     "73-6352200",
-    "76-2105NE4K",
+    "76-2201NE",
     "85-ACS GLIES 1545",
     "66-39AR11K336MNW",
     "66-55SCPG2000B",
     "66-83PG1000",
     "74-800385",
-    "76-2201NE",
-    "85-ACSUS 2/1,5",
+    "76-2213y",
     "66-39AR13K336SW",
     "66-67PG108K4HPAB",
     "66-83PG10000",
     "74-800578",
-    "76-2213y",
+    "76-2214y",
     "66-39AR18K336SW",
     "66-67PG24K4HPAB",
     "66-83PG2000",
     "74-800671",
-    "76-2214y",
-    "66-39AR3K336MNW",
-    "66-67PG36K4HPAB",
-    "66-83PG3000",
-    "74-800672",
     "76-2215y",
     "85-ACUS 2/1,5",
-    "66-39AR6K336MNW",
-    "66-67PG48K4HPAB",
-    "74-800685",
+    "66-39AR3K336MNW",
+    "66-67PG36K4HPAB",
+    "74-800672",
     "76-2216y",
     "85-CLARA-51/P3O3W",
     "85-CLARA-64/P3O3W",
@@ -2568,88 +2571,88 @@ EXTRA_SEARCH_SKUS = [
     "91-03045-679685",
     "SX 99-906-x",
     "85-REN3/37W/830",
-    "86-82610481",
+    "86-83210121",
     "91-03045-126742",
     "91-03045-680685",
     "TRE-060",
     "85-REN3/37W/840",
-    "86-83210121",
+    "86-83210131",
     "91-03045-127742",
     "91-03045-682140",
     "TRE-105",
     "85-REN3/51W/830",
-    "86-83210131",
+    "86-83210221",
     "91-03045-128742",
     "91-03045-684126",
     "TRE-150",
     "85-REN3/51W/840",
-    "86-83210221",
+    "86-83210231",
     "91-03045-133742",
     "91-03045-685126",
     "TRE-200",
     "85-SPORT HALL 125/840",
-    "86-83210231",
+    "86-84391301y",
     "91-03045-134742",
     "91-03045-686126",
     "TRE-250",
     "85-SPORT HALL 145/840",
-    "86-84391301y",
+    "86-84391302y",
     "91-03045-135742",
     "91-03045-687126",
     "85-SPORT HALL 205/840",
-    "86-84391302y",
+    "86-84391303y",
     "91-03045-137742",
     "91-03045-687140",
     "85-SPORT HALL 95/840",
-    "86-84391303y",
+    "86-84391305y",
     "91-03045-138742",
     "91-03045-688140",
     "85-TR32W/1245",
-    "86-84391305y",
+    "86-84392301y",
     "91-03045-140742",
     "91-03045-689140",
     "85-TR32W/620",
-    "86-84392301y",
+    "86-84392302y",
     "91-03045-141742",
     "91-03045-690140",
     "85-VANI 27/830",
-    "86-84392302y",
+    "86-84392303y",
     "91-03045-143742",
     "91-03045-693140",
     "85-VANI 27/840",
-    "86-84392303y",
+    "86-84392305y",
     "91-03045-144742",
     "91-03045-694140",
     "85-VANI 52/830",
-    "86-84392305y",
+    "86-84393301y",
     "91-03045-146742",
     "91-03045-695140",
     "85-VANI 52/840",
-    "86-84393301y",
+    "86-84393302y",
     "91-03045-147742",
     "91-03045-696140",
     "85-VANI 67/830",
-    "86-84393302y",
+    "86-84393303y",
     "91-03045-149742",
     "91-03045-697140",
     "85-VANI 67/840",
-    "86-84393303y",
+    "86-84393305y",
     "91-03045-150742",
     "91-03045-698140",
     "85-VS120-19/3/IP54",
-    "86-84393305y",
+    "86-844321",
     "91-03045-152742",
     "91-75169-098721",
     "85-VS120-19/4/IP54",
-    "86-844321",
+    "86-844322",
     "91-03045-153742",
     "91-75169-099721",
     "85-VS150-28/3/IP54",
-    "86-844322",
+    "86-844323",
     "91-03045-168664",
     "91-78000-684140",
     "85-VS150-28/4/IP54",
-    "86-844323",
+    "86-844331",
     "91-03045-171664",
     "R-SX 99-318-0",
     "SX 1 1209-2",
@@ -3276,6 +3279,72 @@ def set_product_published(product_id: int, published: bool, max_retries: int = 5
     return False
 
 
+def load_stock_cache(path: str = STOCK_CACHE_PATH) -> dict:
+    """Lädt den persistenten Stock-Cache (überlebt zwischen Runs via Git-Commit)."""
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log.warning(f"Stock-Cache konnte nicht geladen werden, starte leer: {e}")
+    return {}
+
+
+def save_stock_cache(cache: dict, path: str = STOCK_CACHE_PATH) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def should_check_sku(sku: str, cache: dict, today_str: str) -> bool:
+    """
+    Entscheidet ob eine Extra-Such-SKU heute geprüft werden muss.
+    - Unbekannte SKUs: immer prüfen
+    - SKUs die CONSECUTIVE_ZERO_THRESHOLD mal hintereinander stock=0 hatten
+      (gefunden oder nicht gefunden): nur noch alle X Tage prüfen
+    - Alles andere (aktiv, kürzlich > 0, noch nicht genug Historie): täglich prüfen
+    """
+    entry = cache.get(sku)
+    if not entry:
+        return True
+    last_checked = entry.get("last_checked")
+    if not last_checked:
+        return True
+    try:
+        days_since = (
+            datetime.strptime(today_str, "%Y-%m-%d") -
+            datetime.strptime(last_checked, "%Y-%m-%d")
+        ).days
+    except ValueError:
+        return True
+
+    consecutive_zero = entry.get("consecutive_zero_checks", 0)
+    if entry.get("found"):
+        if entry.get("last_stock", 0) == 0 and consecutive_zero >= CONSECUTIVE_ZERO_THRESHOLD:
+            return days_since >= ZERO_STOCK_CHECK_INTERVAL_DAYS
+    else:
+        if consecutive_zero >= CONSECUTIVE_ZERO_THRESHOLD:
+            return days_since >= NOT_FOUND_CHECK_INTERVAL_DAYS
+    return True
+
+
+def update_cache_entry(cache: dict, sku: str, found: bool, stock: int,
+                        product_url: str, today_str: str) -> None:
+    entry = cache.get(sku, {})
+    entry["found"] = found
+    entry["last_checked"] = today_str
+    if found:
+        entry["product_url"] = product_url
+        if stock == 0:
+            entry["consecutive_zero_checks"] = entry.get("consecutive_zero_checks", 0) + 1
+        else:
+            entry["consecutive_zero_checks"] = 0
+        entry["last_stock"] = stock
+    else:
+        entry["consecutive_zero_checks"] = entry.get("consecutive_zero_checks", 0) + 1
+        entry.setdefault("last_stock", 0)
+    cache[sku] = entry
+
+
 def get_sheets_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -3422,14 +3491,18 @@ def run_sync():
     # ── Extra SKUs suchen + EXTRA_SEARCH_SKUS Liste ──────────────
     log.info("\n[4/5] Extra SKUs suchen...")
     searched = 0
+    skipped_cache = 0
 
-    # Kombiniere: EXTRA_SEARCH_SKUS + alle Shopify-SKUs die nicht gescrapt wurden
-    extra_skus = list(EXTRA_SEARCH_SKUS)
+    # Dedupliziere EXTRA_SEARCH_SKUS (Bugfix: Liste enthielt Duplikate)
+    extra_skus = list(dict.fromkeys(EXTRA_SEARCH_SKUS))
     for sku in shopify_skus:
         if sku not in elux_by_sku and not is_protected_sku(sku, shopify_skus[sku].get("vendor","")) and sku not in extra_skus:
             extra_skus.append(sku)
 
-    # Cache: URL → bereits geparste Varianten (vermeidet doppeltes Scrapen)
+    stock_cache = load_stock_cache()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Cache: URL → bereits geparste Varianten (vermeidet doppeltes Scrapen im selben Run)
     url_cache: dict = {}
 
     for sku in extra_skus:
@@ -3437,8 +3510,17 @@ def run_sync():
         if not sv:
             log.info(f"  ⚠ {sku}: nicht in Shopify → übersprungen")
             continue
-        if sku in elux_by_sku and sku not in EXTRA_SEARCH_SKUS:
+        # Bugfix: SKU wurde bereits beim normalen Kategorie-Scraping gefunden
+        # → nicht nochmal komplett neu suchen, Daten liegen schon vor
+        if sku in elux_by_sku:
             continue
+
+        # Performance: SKUs die wiederholt stock=0 / nicht gefunden waren,
+        # nur noch alle paar Tage statt täglich prüfen
+        if not should_check_sku(sku, stock_cache, today_str):
+            skipped_cache += 1
+            continue
+
         # Suche auf Elux
         product_url = search_elux_product(sku)
         if product_url:
@@ -3451,10 +3533,12 @@ def run_sync():
                 vs = parse_product(product_url, category)
                 url_cache[product_url] = vs
             # Finde die passende Variante
+            found_variant = False
             for v in vs:
                 if v.sku == sku:
                     elux_by_sku[sku] = v
                     searched += 1
+                    found_variant = True
                     # Sofort Lagerstand setzen wenn abweichend
                     if sv.get("inventory_management") != "shopify":
                         log.info(f"  🔧 Tracking aktivieren für {sku}...")
@@ -3470,8 +3554,20 @@ def run_sync():
                         except Exception as e:
                             log.error(f"  ✗ {sku}: {e}")
                             errors.append(sku)
+                    update_cache_entry(
+                        stock_cache, sku, True,
+                        v.stock if v.stock != -1 else sv["stock"],
+                        product_url, today_str,
+                    )
                     break
-    log.info(f"  Gefunden via Suche: {searched} SKUs")
+            if not found_variant:
+                # Seite gefunden, aber SKU nicht in den Varianten identifiziert
+                update_cache_entry(stock_cache, sku, False, 0, product_url, today_str)
+        else:
+            update_cache_entry(stock_cache, sku, False, 0, "", today_str)
+
+    save_stock_cache(stock_cache)
+    log.info(f"  Gefunden via Suche: {searched} SKUs, übersprungen (Cache): {skipped_cache} SKUs")
 
     log.info("\n[5/5] Produkt-Sichtbarkeit prüfen...")
     restored_products: list = []
@@ -3504,6 +3600,7 @@ def run_sync():
     log.info(f"Ausgelistet:         {len(delisted)}")
     log.info(f"Geschützt (Sollux):  {len(skipped_protected)}")
     log.info(f"Wieder sichtbar:     {len(restored_products)}")
+    log.info(f"Cache übersprungen:  {skipped_cache}")
     log.info(f"Fehler:              {len(errors)}")
     log.info("=" * 60)
 
